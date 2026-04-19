@@ -36,6 +36,12 @@ Tone: grim, tense, atmospheric. Think *Alien*, *Dead Space*, *Firefly*.
 
 On death you see a full run report: designation, class, sectors survived, level reached, total XP, credits, and items carried at time of death.
 
+## Play Online
+
+**[▶ Play on GitHub Pages](https://camouf1age.github.io/Void-runner/)**
+
+You'll need a Claude API key from [console.anthropic.com](https://console.anthropic.com). Your key is stored only in your browser's localStorage — it never leaves your machine except to call Anthropic's API directly.
+
 ## Tech Stack
 
 - React (single JSX component)
