@@ -1,0 +1,456 @@
+import { useState, useEffect, useRef } from "react";
+
+const CLASSES = [
+  { id: "pilot",   name: "PILOT",   desc: "Expert navigator. High evasion, ship system bonuses.", hp: 90,  shield: 30, credits: 150, items: ["Nav Charts", "Emergency Flare"] },
+  { id: "hacker",  name: "HACKER",  desc: "Digital ghost. Can access locked systems and override security.", hp: 75,  shield: 20, credits: 200, items: ["Exploit Kit", "Data Scrambler"] },
+  { id: "soldier", name: "SOLDIER", desc: "Combat hardened. Survives what others can't.", hp: 120, shield: 15, credits: 100, items: ["Combat Armor", "Stim Pack"] },
+];
+
+const SYSTEM_PROMPT = `You are the narrator for VOID RUNNER — a brutal sci-fi roguelike text adventure set in the far future. The player is alone in deep space, making desperate choices to survive.
+
+TONE: Grim, tense, atmospheric. Think Alien, Dead Space, Firefly. Brief dark humor is fine. Keep it grounded and dangerous. Be specific — name ships, stations, alien species, corporations.
+
+RESPONSE FORMAT (strict):
+1. Write 2-3 short paragraphs of atmospheric narrative. Be vivid and tense.
+2. End EVERY response with a JSON block in <STATE> tags:
+
+<STATE>
+{
+  "hp_change": 0,
+  "shield_change": 0,
+  "credits_change": 0,
+  "xp_gain": 10,
+  "add_items": [],
+  "remove_items": [],
+  "status": "Brief one-line status message",
+  "choices": ["Choice A", "Choice B", "Choice C"]
+}
+</STATE>
+
+STRICT RULES:
+- hp_change: integer delta. Combat: -5 to -30. Death: enough to kill them.
+- shield_change: integer delta. Safe areas slowly regenerate shields (+5 to +15).
+- credits_change: integer delta. Looting: +20 to +150.
+- xp_gain: 5-25 per meaningful event.
+- add_items / remove_items: array of item name strings. Keep inventory interesting and lean.
+- choices: always 2-4 meaningful choices with real tradeoffs. Never trivial options.
+- React to the player's class and inventory in your narrative. A soldier fights differently than a hacker.
+- Each run should feel unique — derelict ships, alien anomalies, pirates, rogue AIs, corporate mercs, distress signals.
+- When the player dies, write a vivid death scene. Set hp_change to kill them.`;
+
+const css = `
+  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #060a12;
+    --surface: #0c1220;
+    --border: #192038;
+    --cyan: #00e5ff;
+    --cyan-dim: rgba(0,229,255,0.1);
+    --gold: #ffd740;
+    --red: #ff1744;
+    --green: #00e676;
+    --blue: #4fc3f7;
+    --text: #b8cce0;
+    --muted: #3d5470;
+  }
+
+  .vr { font-family: 'Share Tech Mono', monospace; background: var(--bg); color: var(--text); min-height: 100vh; position: relative; overflow: hidden; }
+
+  .stars {
+    position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    background:
+      radial-gradient(1px 1px at 8%  12%, rgba(255,255,255,.55) 0%, transparent 100%),
+      radial-gradient(1px 1px at 22% 57%, rgba(255,255,255,.35) 0%, transparent 100%),
+      radial-gradient(1px 1px at 37% 28%, rgba(255,255,255,.45) 0%, transparent 100%),
+      radial-gradient(1px 1px at 53% 72%, rgba(255,255,255,.3)  0%, transparent 100%),
+      radial-gradient(1px 1px at 68% 18%, rgba(255,255,255,.5)  0%, transparent 100%),
+      radial-gradient(1px 1px at 82% 48%, rgba(255,255,255,.35) 0%, transparent 100%),
+      radial-gradient(1px 1px at 14% 83%, rgba(255,255,255,.45) 0%, transparent 100%),
+      radial-gradient(1px 1px at 92% 92%, rgba(255,255,255,.3)  0%, transparent 100%),
+      radial-gradient(1px 1px at 46% 40%, rgba(255,255,255,.4)  0%, transparent 100%),
+      radial-gradient(1px 1px at 76% 66%, rgba(255,255,255,.25) 0%, transparent 100%),
+      radial-gradient(2px 2px at 50% 50%, rgba(0,229,255,.08)   0%, transparent 100%);
+  }
+
+  .scanlines {
+    position: fixed; inset: 0; pointer-events: none; z-index: 1;
+    background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,.07) 2px, rgba(0,0,0,.07) 4px);
+  }
+
+  .content { position: relative; z-index: 2; }
+
+  /* ── MENU ── */
+  .menu { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2.5rem; }
+  .menu-logo { font-family: 'Orbitron', monospace; font-size: clamp(3rem,9vw,6rem); font-weight: 900; color: var(--cyan); letter-spacing: .2em; animation: glow 3s ease-in-out infinite; }
+  .menu-sub { font-family: 'Orbitron', monospace; font-size: .75rem; color: var(--muted); letter-spacing: .35em; margin-top: -.8rem; }
+  @keyframes glow {
+    0%,100% { text-shadow: 0 0 30px rgba(0,229,255,.4), 0 0 80px rgba(0,229,255,.15); }
+    50%      { text-shadow: 0 0 50px rgba(0,229,255,.7), 0 0 120px rgba(0,229,255,.3); }
+  }
+  .menu-notice { font-size: .72rem; color: var(--muted); border: 1px solid var(--border); padding: .75rem 1.5rem; text-align: center; max-width: 380px; line-height: 1.7; letter-spacing: .05em; }
+
+  /* ── BUTTONS ── */
+  .btn { font-family: 'Orbitron', monospace; background: transparent; border: 2px solid var(--cyan); color: var(--cyan); padding: .9rem 2.5rem; font-size: .85rem; font-weight: 700; letter-spacing: .3em; cursor: pointer; transition: all .18s; position: relative; overflow: hidden; }
+  .btn::after { content: ''; position: absolute; inset: 0; background: var(--cyan); transform: translateX(-100%); transition: transform .18s; z-index: -1; }
+  .btn:hover::after { transform: translateX(0); }
+  .btn:hover { color: #000; }
+  .btn:disabled { opacity: .35; cursor: not-allowed; }
+  .btn:disabled:hover::after { transform: translateX(-100%); }
+  .btn:disabled:hover { color: var(--cyan); }
+  .btn-ghost { background: none; border: none; color: var(--muted); font-family: 'Share Tech Mono', monospace; font-size: .75rem; cursor: pointer; letter-spacing: .1em; transition: color .15s; }
+  .btn-ghost:hover { color: var(--text); }
+
+  /* ── CREATE ── */
+  .create { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2rem; padding: 2rem; }
+  .create-title { font-family: 'Orbitron', monospace; font-size: 1rem; color: var(--cyan); letter-spacing: .35em; }
+  .name-input { background: var(--surface); border: none; border-bottom: 2px solid var(--cyan); color: var(--text); font-family: 'Share Tech Mono', monospace; font-size: 1.4rem; padding: .7rem 1rem; width: 100%; max-width: 380px; outline: none; text-align: center; letter-spacing: .15em; }
+  .name-input::placeholder { color: var(--muted); }
+  .class-label { font-family: 'Orbitron', monospace; font-size: .55rem; color: var(--muted); letter-spacing: .35em; }
+  .class-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 1rem; width: 100%; max-width: 680px; }
+  .class-card { background: var(--surface); border: 1px solid var(--border); padding: 1.4rem 1rem; cursor: pointer; transition: all .18s; text-align: center; }
+  .class-card:hover, .class-card.sel { border-color: var(--cyan); background: var(--cyan-dim); }
+  .class-card.sel { border-width: 2px; }
+  .class-name { font-family: 'Orbitron', monospace; font-size: .8rem; font-weight: 700; color: var(--cyan); margin-bottom: .5rem; letter-spacing: .2em; }
+  .class-desc { font-size: .7rem; color: var(--muted); line-height: 1.55; margin-bottom: .75rem; }
+  .class-stats { font-size: .68rem; color: var(--text); line-height: 1.9; }
+
+  /* ── GAME ── */
+  .game { display: grid; grid-template-columns: 210px 1fr; grid-template-rows: 52px 1fr auto; height: 100vh; max-height: 100vh; }
+  .g-header { grid-column: 1/-1; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; padding: 0 1.25rem; }
+  .g-logo { font-family: 'Orbitron', monospace; font-size: .85rem; font-weight: 900; color: var(--cyan); letter-spacing: .25em; }
+  .g-meta { font-size: .65rem; color: var(--muted); letter-spacing: .1em; }
+  .sidebar { background: var(--surface); border-right: 1px solid var(--border); padding: .9rem; overflow-y: auto; display: flex; flex-direction: column; gap: 1.1rem; }
+  .s-label { font-family: 'Orbitron', monospace; font-size: .5rem; color: var(--muted); letter-spacing: .25em; margin-bottom: .2rem; }
+  .bar-bg { background: rgba(255,255,255,.05); height: 5px; border-radius: 3px; overflow: hidden; margin-bottom: .2rem; }
+  .bar-fill { height: 100%; border-radius: 3px; transition: width .5s ease, background-color .5s ease; }
+  .s-val { font-size: .72rem; color: var(--text); }
+  .inv-item { font-size: .68rem; color: var(--text); padding: .28rem .5rem; border: 1px solid var(--border); margin-bottom: .28rem; background: rgba(255,255,255,.02); }
+  .inv-item::before { content: "▸ "; color: var(--cyan); }
+  .inv-empty { font-size: .68rem; color: var(--muted); }
+
+  /* ── LOG ── */
+  .log { overflow-y: auto; padding: 1.25rem 1.5rem; display: flex; flex-direction: column; gap: .9rem; }
+  .log-narrative { font-size: .83rem; line-height: 1.85; color: var(--text); border-left: 2px solid var(--border); padding-left: 1rem; }
+  .log-player { font-size: .78rem; color: var(--cyan); }
+  .log-status { font-size: .7rem; color: var(--gold); letter-spacing: .1em; }
+  .log-error { font-size: .73rem; color: var(--red); animation: blink 1s step-end infinite; }
+  .log-level { font-size: .73rem; color: var(--green); letter-spacing: .1em; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .thinking { font-size: .72rem; color: var(--muted); letter-spacing: .2em; animation: blink 1.2s step-end infinite; }
+
+  /* ── INPUT ── */
+  .input-area { grid-column: 2; background: var(--surface); border-top: 1px solid var(--border); padding: .85rem 1.25rem; }
+  .choices { display: flex; flex-wrap: wrap; gap: .45rem; margin-bottom: .7rem; }
+  .choice-btn { background: transparent; border: 1px solid var(--border); color: var(--text); font-family: 'Share Tech Mono', monospace; font-size: .72rem; padding: .45rem .9rem; cursor: pointer; transition: all .15s; letter-spacing: .05em; }
+  .choice-btn:hover { border-color: var(--cyan); color: var(--cyan); background: var(--cyan-dim); }
+  .custom-row { display: flex; gap: .5rem; align-items: center; }
+  .caret { color: var(--muted); font-size: .85rem; }
+  .custom-input { flex: 1; background: transparent; border: none; border-bottom: 1px solid var(--border); color: var(--cyan); font-family: 'Share Tech Mono', monospace; font-size: .82rem; padding: .35rem 0; outline: none; }
+  .custom-input::placeholder { color: var(--muted); }
+  .custom-input:focus { border-color: var(--cyan); }
+  .send-btn { background: transparent; border: 1px solid var(--muted); color: var(--muted); font-family: 'Share Tech Mono', monospace; font-size: .7rem; padding: .35rem .7rem; cursor: pointer; transition: all .15s; }
+  .send-btn:hover { border-color: var(--cyan); color: var(--cyan); }
+
+  /* ── DEAD ── */
+  .dead { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2rem; padding: 2rem; }
+  .dead-title { font-family: 'Orbitron', monospace; font-size: clamp(2rem,7vw,4.5rem); font-weight: 900; color: var(--red); letter-spacing: .2em; text-shadow: 0 0 40px rgba(255,23,68,.6); animation: flicker .2s infinite; }
+  @keyframes flicker { 0%,100% { opacity:1; } 50% { opacity:.8; } }
+  .dead-sub { font-family: 'Orbitron', monospace; font-size: .65rem; color: var(--muted); letter-spacing: .35em; margin-top: -1.2rem; }
+  .dead-panel { background: var(--surface); border: 1px solid rgba(255,23,68,.25); padding: 1.75rem; min-width: 300px; }
+  .dead-head { font-family: 'Orbitron', monospace; font-size: .55rem; color: var(--red); letter-spacing: .25em; margin-bottom: 1rem; }
+  .dead-row { display: flex; justify-content: space-between; font-size: .75rem; border-bottom: 1px solid var(--border); padding: .4rem 0; }
+  .dead-row:last-child { border-bottom: none; }
+  .dead-lbl { color: var(--muted); }
+  .dead-val { color: var(--text); }
+
+  @media (max-width: 580px) {
+    .game { grid-template-columns: 1fr; grid-template-rows: 52px auto 1fr auto; }
+    .sidebar { grid-column: 1; border-right: none; border-bottom: 1px solid var(--border); flex-direction: row; flex-wrap: wrap; gap: 1rem; }
+    .input-area { grid-column: 1; }
+    .class-grid { grid-template-columns: 1fr; }
+  }
+`;
+
+function Bar({ pct, color }) {
+  return (
+    <div className="bar-bg">
+      <div className="bar-fill" style={{ width: `${pct}%`, background: color }} />
+    </div>
+  );
+}
+
+export default function VoidRunner() {
+  const [screen, setScreen]           = useState("menu");
+  const [playerName, setPlayerName]   = useState("");
+  const [cls, setCls]                 = useState(null);
+  const [gs, setGs]                   = useState(null);
+  const [log, setLog]                 = useState([]);
+  const [choices, setChoices]         = useState([]);
+  const [customInput, setCustomInput] = useState("");
+  const [history, setHistory]         = useState([]);
+  const [loading, setLoading]         = useState(false);
+  const [runStats, setRunStats]       = useState(null);
+  const logRef   = useRef(null);
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [log, loading]);
+
+  const initGs = (c) => ({
+    name: playerName, class: c.name,
+    hp: c.hp, maxHp: c.hp,
+    shield: c.shield, maxShield: c.shield,
+    credits: c.credits,
+    xp: 0, level: 1,
+    inventory: [...c.items],
+    turn: 0,
+  });
+
+  const applyUpdate = (cur, u) => {
+    let next = { ...cur };
+    next.hp      = Math.max(0, Math.min(next.maxHp,      next.hp      + (u.hp_change      || 0)));
+    next.shield  = Math.max(0, Math.min(next.maxShield,  next.shield  + (u.shield_change  || 0)));
+    next.credits = Math.max(0,                            next.credits + (u.credits_change || 0));
+    next.xp     += (u.xp_gain || 0);
+    next.turn   += 1;
+    if (u.add_items?.length)    next.inventory = [...next.inventory, ...u.add_items];
+    if (u.remove_items?.length) next.inventory = next.inventory.filter(i => !u.remove_items.includes(i));
+    const newLevel = Math.floor(next.xp / 150) + 1;
+    if (newLevel > next.level) {
+      next.level = newLevel;
+      next.maxHp += 15;
+      next.hp = Math.min(next.maxHp, next.hp + 25);
+      return { gs: next, leveled: true };
+    }
+    return { gs: next, leveled: false };
+  };
+
+  const callAI = async (msgs, currentGs) => {
+    setLoading(true);
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 1000,
+          system: SYSTEM_PROMPT,
+          messages: msgs,
+        }),
+      });
+      const data = await res.json();
+      const raw  = data.content?.[0]?.text || "";
+
+      const match = raw.match(/<STATE>([\s\S]*?)<\/STATE>/);
+      let upd = { hp_change: 0, shield_change: 0, credits_change: 0, xp_gain: 5, add_items: [], remove_items: [], status: "", choices: ["Look around", "Check status", "Move on"] };
+      if (match) { try { upd = { ...upd, ...JSON.parse(match[1]) }; } catch (_) {} }
+
+      const narrative = raw.replace(/<STATE>[\s\S]*?<\/STATE>/, "").trim();
+      const { gs: nextGs, leveled } = applyUpdate(currentGs, upd);
+
+      setGs(nextGs);
+      setLog(prev => [
+        ...prev,
+        { type: "narrative", text: narrative },
+        ...(upd.status  ? [{ type: "status", text: upd.status }] : []),
+        ...(leveled     ? [{ type: "level",  text: `▲ LEVEL UP — Now level ${nextGs.level}. Hull upgraded.` }] : []),
+      ]);
+      setChoices(upd.choices || []);
+
+      if (nextGs.hp <= 0) {
+        setRunStats(nextGs);
+        setTimeout(() => setScreen("dead"), 2500);
+      }
+
+      return [...msgs, { role: "assistant", content: raw }];
+    } catch (_) {
+      setLog(prev => [...prev, { type: "error", text: "[SIGNAL LOST — RECONNECTING...]" }]);
+      return msgs;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const startGame = async () => {
+    const c = CLASSES.find(c => c.id === cls);
+    if (!playerName.trim() || !c) return;
+    const g = initGs(c);
+    setGs(g);
+    setLog([]);
+    setChoices([]);
+    setScreen("game");
+    const open = {
+      role: "user",
+      content: `NEW RUN — Player: ${g.name} | Class: ${c.name} | HP: ${c.hp} | Shield: ${c.shield} | Credits: ${c.credits} | Items: ${c.items.join(", ")}. Start immediately — something is already going wrong. Drop the player into the action.`,
+    };
+    const h = [open];
+    setHistory(h);
+    const updated = await callAI(h, g);
+    setHistory(updated);
+  };
+
+  const handleAction = async (action) => {
+    if (loading || !gs || gs.hp <= 0) return;
+    const msg = {
+      role: "user",
+      content: `${action}\n\n[HP: ${gs.hp}/${gs.maxHp} | Shield: ${gs.shield} | Credits: ${gs.credits} | Items: ${gs.inventory.join(", ")}]`,
+    };
+    const newH = [...history, msg];
+    setLog(prev => [...prev, { type: "player", text: `▸ ${action}` }]);
+    setChoices([]);
+    const updated = await callAI(newH, gs);
+    setHistory(updated);
+    setCustomInput("");
+  };
+
+  const hpPct  = gs ? (gs.hp / gs.maxHp) * 100 : 100;
+  const shdPct = gs ? (gs.shield / gs.maxShield) * 100 : 100;
+  const xpPct  = gs ? ((gs.xp % 150) / 150) * 100 : 0;
+  const hpCol  = hpPct > 50 ? "#00e5ff" : hpPct > 25 ? "#ffd740" : "#ff1744";
+
+  return (
+    <div className="vr">
+      <style>{css}</style>
+      <div className="stars" /><div className="scanlines" />
+      <div className="content">
+
+        {/* ── MENU ── */}
+        {screen === "menu" && (
+          <div className="menu">
+            <div>
+              <div className="menu-logo">VOID RUNNER</div>
+              <div className="menu-sub">Deep Space Survival Protocol</div>
+            </div>
+            <div className="menu-notice">
+              PERMADEATH ENABLED<br />
+              Each sector is procedurally generated by AI.<br />
+              No two runs are alike. Most end badly.
+            </div>
+            <button className="btn" onClick={() => setScreen("create")}>INITIALIZE RUN</button>
+          </div>
+        )}
+
+        {/* ── CREATE ── */}
+        {screen === "create" && (
+          <div className="create">
+            <div className="create-title">— CREW MANIFEST —</div>
+            <input className="name-input" placeholder="ENTER DESIGNATION" value={playerName}
+              onChange={e => setPlayerName(e.target.value)} maxLength={20} autoFocus />
+            <div className="class-label">SELECT SPECIALIZATION</div>
+            <div className="class-grid">
+              {CLASSES.map(c => (
+                <div key={c.id} className={`class-card ${cls === c.id ? "sel" : ""}`} onClick={() => setCls(c.id)}>
+                  <div className="class-name">{c.name}</div>
+                  <div className="class-desc">{c.desc}</div>
+                  <div className="class-stats">
+                    HP: {c.hp} · SHD: {c.shield}<br />
+                    CR: {c.credits}<br />
+                    {c.items.join(" · ")}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <button className="btn" onClick={startGame} disabled={!playerName.trim() || !cls}>DEPLOY</button>
+            <button className="btn-ghost" onClick={() => setScreen("menu")}>← ABORT</button>
+          </div>
+        )}
+
+        {/* ── GAME ── */}
+        {screen === "game" && gs && (
+          <div className="game">
+            <div className="g-header">
+              <div className="g-logo">VOID RUNNER</div>
+              <div className="g-meta">{gs.name} · {gs.class} · SECTOR {gs.turn} · LVL {gs.level}</div>
+            </div>
+
+            <div className="sidebar">
+              <div>
+                <div className="s-label">Hull Integrity</div>
+                <Bar pct={hpPct} color={hpCol} />
+                <div className="s-val">{gs.hp} / {gs.maxHp}</div>
+              </div>
+              <div>
+                <div className="s-label">Shields</div>
+                <Bar pct={shdPct} color="#4fc3f7" />
+                <div className="s-val">{gs.shield} / {gs.maxShield}</div>
+              </div>
+              <div>
+                <div className="s-label">XP — Level {gs.level}</div>
+                <Bar pct={xpPct} color="#00e676" />
+                <div className="s-val">{gs.xp % 150} / 150</div>
+              </div>
+              <div>
+                <div className="s-label">Credits</div>
+                <div className="s-val" style={{ color: "#ffd740", fontSize: ".95rem" }}>◈ {gs.credits}</div>
+              </div>
+              <div style={{ flex: 1 }}>
+                <div className="s-label" style={{ marginBottom: ".5rem" }}>Inventory</div>
+                {gs.inventory.length === 0
+                  ? <div className="inv-empty">Nothing</div>
+                  : gs.inventory.map((item, i) => <div key={i} className="inv-item">{item}</div>)}
+              </div>
+            </div>
+
+            <div className="log" ref={logRef}>
+              {log.map((e, i) => (
+                <div key={i} className={`log-${e.type === "level" ? "level" : e.type}`}>{e.text}</div>
+              ))}
+              {loading && <div className="thinking">▌ TRANSMITTING...</div>}
+            </div>
+
+            <div className="input-area">
+              {!loading && choices.length > 0 && (
+                <div className="choices">
+                  {choices.map((c, i) => (
+                    <button key={i} className="choice-btn" onClick={() => handleAction(c)}>{c}</button>
+                  ))}
+                </div>
+              )}
+              <div className="custom-row">
+                <span className="caret">▸</span>
+                <input ref={inputRef} className="custom-input" placeholder="or type a custom action..."
+                  value={customInput} onChange={e => setCustomInput(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && handleAction(customInput.trim())}
+                  disabled={loading} />
+                <button className="send-btn" onClick={() => handleAction(customInput.trim())} disabled={loading}>SEND</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── DEAD ── */}
+        {screen === "dead" && runStats && (
+          <div className="dead">
+            <div className="dead-title">YOU DIED</div>
+            <div className="dead-sub">TRANSMISSION TERMINATED</div>
+            <div className="dead-panel">
+              <div className="dead-head">— RUN REPORT —</div>
+              {[
+                ["Designation",       runStats.name],
+                ["Specialization",    runStats.class],
+                ["Sectors Survived",  runStats.turn],
+                ["Level Reached",     runStats.level],
+                ["Total XP",          runStats.xp],
+                ["Credits at Death",  `◈ ${runStats.credits}`],
+                ["Items Carried",     runStats.inventory.join(", ") || "None"],
+              ].map(([l, v]) => (
+                <div key={l} className="dead-row">
+                  <span className="dead-lbl">{l}</span>
+                  <span className="dead-val">{v}</span>
+                </div>
+              ))}
+            </div>
+            <button className="btn" onClick={() => { setScreen("create"); setLog([]); setChoices([]); setHistory([]); setGs(null); setRunStats(null); }}>
+              RUN AGAIN
+            </button>
+          </div>
+        )}
+
+      </div>
+    </div>
+  );
+}
