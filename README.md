@@ -40,11 +40,11 @@ On death you see a full run report: designation, class, sectors survived, level 
 
 **[▶ Play on GitHub Pages](https://camouf1age.github.io/Void-runner/)**
 
-You'll need a Claude API key from [console.anthropic.com](https://console.anthropic.com). Your key is stored only in your browser's localStorage — it never leaves your machine except to call Anthropic's API directly.
+You'll need a free Groq API key from [console.groq.com](https://console.groq.com). Your key is stored only in your browser's localStorage — it never leaves your machine except to call Groq's API directly. Groq's free tier is generous (14,000 requests/day).
 
 ## Tech Stack
 
 - React (single JSX component)
-- Claude API (`claude-sonnet-4-20250514`) for narrative generation
+- Groq API (`llama-3.3-70b-versatile`) for narrative generation — free tier
 - Fonts: Orbitron + Share Tech Mono (Google Fonts)
 - No external dependencies beyond React and the Anthropic API
